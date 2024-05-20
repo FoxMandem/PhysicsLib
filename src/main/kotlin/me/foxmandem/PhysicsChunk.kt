@@ -4,7 +4,9 @@ import com.jme3.bullet.collision.shapes.MeshCollisionShape
 import com.jme3.bullet.collision.shapes.infos.IndexedMesh
 import com.jme3.bullet.objects.PhysicsRigidBody
 import kotlinx.coroutines.*
+import me.foxmandem.PhysicsManager.Companion.collisionBoundingBoxes
 import me.foxmandem.PhysicsManager.Companion.getOrCreate
+import me.foxmandem.PhysicsManager.Companion.isFull
 import me.foxmandem.convert.jme
 import me.foxmandem.shape.Face
 import net.minestom.server.collision.BoundingBox
@@ -189,23 +191,6 @@ class PhysicsChunk(
                 faces.add(face)
             }
         }
-    }
-
-    private fun Block.isFull(): Boolean {
-        if (isAir || isLiquid) return false
-        val shape = registry().collisionShape() as ShapeImpl
-        val boxes = shape.collisionBoundingBoxes()
-        if (boxes.size != 1) return false
-        val box = boxes[0]
-        return box.minX() == 0.0 && box.minY() == 0.0 && box.minZ() == 0.0 && box.maxX() == 1.0 && box.maxY() == 1.0 && box.maxZ() == 1.0
-    }
-
-    private val collisionBoundingBoxesField =
-        ShapeImpl::class.java.getDeclaredField("collisionBoundingBoxes").apply { isAccessible = true }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun ShapeImpl.collisionBoundingBoxes(): Array<BoundingBox> {
-        return collisionBoundingBoxesField.get(this) as Array<BoundingBox>
     }
 
     private fun getPhysics(): PhysicsManager {

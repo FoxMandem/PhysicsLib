@@ -3,7 +3,10 @@ package me.foxmandem
 import com.jme3.bullet.PhysicsSpace
 import kotlinx.coroutines.NonCancellable.cancel
 import me.foxmandem.space.PhysicsThread
+import net.minestom.server.collision.BoundingBox
+import net.minestom.server.collision.ShapeImpl
 import net.minestom.server.instance.Instance
+import net.minestom.server.instance.block.Block
 
 class PhysicsManager(val instance: Instance) {
 
@@ -15,6 +18,23 @@ class PhysicsManager(val instance: Instance) {
             if(manager == null)
                 managers.add(PhysicsManager((instance)))
             return managers.first { it.instance == instance}
+        }
+
+        internal fun Block.isFull(): Boolean {
+            if (isAir || isLiquid) return false
+            val shape = registry().collisionShape() as ShapeImpl
+            val boxes = shape.collisionBoundingBoxes()
+            if (boxes.size != 1) return false
+            val box = boxes[0]
+            return box.minX() == 0.0 && box.minY() == 0.0 && box.minZ() == 0.0 && box.maxX() == 1.0 && box.maxY() == 1.0 && box.maxZ() == 1.0
+        }
+
+        private val collisionBoundingBoxesField =
+            ShapeImpl::class.java.getDeclaredField("collisionBoundingBoxes").apply { isAccessible = true }
+
+        @Suppress("UNCHECKED_CAST")
+        internal fun ShapeImpl.collisionBoundingBoxes(): Array<BoundingBox> {
+            return collisionBoundingBoxesField.get(this) as Array<BoundingBox>
         }
     }
 
