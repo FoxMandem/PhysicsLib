@@ -1,4 +1,4 @@
-package me.foxmandem.space
+package me.foxmandem.thread
 
 import java.util.*
 import java.util.concurrent.ConcurrentLinkedQueue

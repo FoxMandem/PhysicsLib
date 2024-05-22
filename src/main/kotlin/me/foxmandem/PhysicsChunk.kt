@@ -3,7 +3,6 @@ package me.foxmandem
 import com.jme3.bullet.collision.shapes.MeshCollisionShape
 import com.jme3.bullet.collision.shapes.infos.IndexedMesh
 import com.jme3.bullet.objects.PhysicsRigidBody
-import kotlinx.coroutines.*
 import me.foxmandem.PhysicsManager.Companion.collisionBoundingBoxes
 import me.foxmandem.PhysicsManager.Companion.getOrCreate
 import me.foxmandem.PhysicsManager.Companion.isFull
@@ -16,23 +15,17 @@ import net.minestom.server.instance.DynamicChunk
 import net.minestom.server.instance.Instance
 import net.minestom.server.instance.block.Block
 import net.minestom.server.instance.block.BlockFace
-import net.minestom.server.instance.block.BlockHandler
 import net.minestom.server.instance.heightmap.Heightmap
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.Executors
-import kotlin.math.abs
 
 class PhysicsChunk(
     instance: Instance,
     chunkX: Int,
     chunkZ: Int
 ) : DynamicChunk(instance, chunkX, chunkZ) {
+
     private var isLoaded = false
     private var isRecent = false
-    private val mesh: MutableList<Pair<Int, PhysicsRigidBody>> = mutableListOf()
-
-    private val executor = Executors.newFixedThreadPool(abs(getMinSection()) + getMaxSection())
-    private val scope = CoroutineScope(executor.asCoroutineDispatcher())
 
     override fun onLoad() {
         isLoaded = true
@@ -43,31 +36,10 @@ class PhysicsChunk(
         generateMesh()
     }
 
-    private fun generateMesh() {
+    fun generateMesh() {
         for(i in getMinSection() until Heightmap.getHighestBlockSection(this) / 16) {
             generateSection(i)
         }
-    }
-
-    override fun setBlock(
-        x: Int,
-        y: Int,
-        z: Int,
-        block: Block,
-        placement: BlockHandler.Placement?,
-        destroy: BlockHandler.Destroy?
-    ) {
-        super.setBlock(x, y, z, block, placement, destroy)
-
-        val sectionInt = y / 16
-
-        val obj = mesh.firstOrNull { it.first == sectionInt }
-        if(obj != null) {
-            getPhysics().space.removeCollisionObject(obj.second)
-            mesh.remove(obj)
-        }
-
-        generateSection(sectionInt)
     }
 
     private fun triangulate(faces: List<Face>): List<Vec> {
@@ -85,59 +57,40 @@ class PhysicsChunk(
     }
 
     private fun generateSection(sectionInt: Int) {
-        val job = scope.launch {
-            val faces = ConcurrentLinkedQueue<Face>()
+        val vertices = triangulate(getFaces(sectionInt, ConcurrentLinkedQueue<Face>()))
 
-            getFaces(sectionInt, faces)
+        if (vertices.isEmpty()) return
 
-            val vertices = triangulate(faces.toList())
+        val mesh = IndexedMesh(vertices.map(Vec::jme).toTypedArray(), IntArray(vertices.size) { it })
+        val shape = MeshCollisionShape(true, mesh)
+        getPhysics().space.addCollisionObject(PhysicsRigidBody(shape, 0f))
 
-            if (vertices.isEmpty()) return@launch
-
-            val mesh = IndexedMesh(vertices.map(Vec::jme).toTypedArray(), IntArray(vertices.size) { it })
-            val shape = MeshCollisionShape(true, mesh)
-            val body = PhysicsRigidBody(shape, 0f)
-
-            this@PhysicsChunk.mesh.add(Pair(sectionInt, body))
-
-            getPhysics().space.addCollisionObject(body)
-            isRecent = true
-        }
-        job.invokeOnCompletion {
-            job.cancel()
-        }
-
+        isRecent = true
     }
 
     private fun getFaces(sectionInt: Int, faces: ConcurrentLinkedQueue<Face>) : List<Face> {
         val section = getSection(sectionInt)
+        val palette = section.blockPalette()
 
-        section.blockPalette().getAll { x, y, z, value ->
-            val block = Block.fromStateId(value.toShort())
-            if (block != null) {
-                if (!block.isAir || !block.isLiquid) {
-                    val blockY = sectionInt * 16 + y
-                    val neighbors = mutableListOf(
-                        getBlock(x + 1, blockY, z),
-                        getBlock(x, blockY + 1, z),
-                        getBlock(x, blockY, z + 1),
+        palette.getAll { x, y, z, value ->
+            if (value != 0) {
+                val blockY = sectionInt * 16 + y
 
-                        getBlock(x - 1, blockY, z),
-                        getBlock(x, blockY, z - 1),
-                    )
+                var occluded = true;
 
-                    if(blockY != instance.dimensionType.minY) {
-                        neighbors.add(getBlock(x, blockY - 1, z))
-                    }
+                if(getBlock(x + 1, blockY, z).isAir) occluded = false
+                if(getBlock(x, blockY + 1, z).isAir && occluded) occluded = false
+                if(getBlock(x, blockY, z + 1).isAir && occluded) occluded = false
 
-                    var occluded = true;
-                    for (neighbor in neighbors) {
-                        if (neighbor.isAir || neighbor.isLiquid) occluded = false
-                    }
+                if(getBlock(x - 1, blockY, z).isAir && occluded) occluded = false
+                if(getBlock(x, blockY, z - 1).isAir && occluded) occluded = false
 
-                    if (!occluded) {
-                        getBlockFaces(x, blockY, z, block, faces)
-                    }
+                if(blockY != instance.dimensionType.minY && occluded) {
+                    if(getBlock(x, blockY - 1, z).isAir) occluded = false
+                }
+
+                if (!occluded) {
+                    getBlockFaces(x, blockY, z, Block.fromStateId(value.toShort())!!, faces)
                 }
             }
         }
@@ -154,10 +107,8 @@ class PhysicsChunk(
     ) {
         val shape = block.registry().collisionShape() as ShapeImpl
         val boxes = shape.collisionBoundingBoxes()
-
-        boxes.forEach {
-            getFaces(x, blockY, z, it, faces)
-        }
+        //Should only have one box
+        getFaces(x, blockY, z, boxes[0], faces)
     }
 
     private fun getFaces(
